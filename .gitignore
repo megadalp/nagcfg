@@ -1,1 +1,3 @@
 etc/runtime
+*_prev.*
+test.*
