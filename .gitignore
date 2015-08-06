@@ -1,3 +1,4 @@
 etc/runtime/*
 _prev.*
 test.*
+.DS_*
