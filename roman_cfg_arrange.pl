@@ -3,7 +3,7 @@
 use strict;
 use Clone 'clone';
 
-use lib("./lib");
+use lib("/usr/local/nagios/lib");
 use Nagios::Config;
 
 use Data::Dumper;
@@ -18,7 +18,7 @@ $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей п�
     my $DEBUG = ( defined( $ARGV[0] ) and $ARGV[0] eq 'nodebug' ) ? 0 : 1;
 
     ###################################################################
-    my $BASE_DIR    = qq[/Users/dalp/Dropbox/Projects/nagcfg/etc];
+    my $BASE_DIR    = qq[/usr/local/nagios/etc];
     ###################################################################
 
     my $CFG_IN      = qq[$BASE_DIR/objects];
@@ -32,7 +32,7 @@ $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей п�
         $DIR_TEMPLATES_OUT->{$site} = qq[$CFG_OUT/local.config$site];
         # файлы будут дописываться в конец. Поэтому перед началом работы удаляем и создаем
         # (пустые) выходные каталоги каталоги и файлы, чтобы не получилось накладок
-        system("rm -rf " . $DIR_TEMPLATES_OUT->{$site}) if length($CFG_OUT) > 7 and -d $CFG_OUT;
+        # system("rm -rf " . $DIR_TEMPLATES_OUT->{$site}) if length($CFG_OUT) > 7 and -d $CFG_OUT;
         mkdir $DIR_TEMPLATES_OUT->{$site} if not -d $DIR_TEMPLATES_OUT->{$site};
     }
 
@@ -61,10 +61,6 @@ $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей п�
     };
 
     my %FILE_HANDLERS; # здесь будет список уже открытых файлов, типа <file name> => <FILE_HANDLER>. Чтобы не открывать каждый раз
-
-    # еще глобальная переменная, заполняется внутри build_hostgroups(), для определения площадки по имени хоста.
-    # в т.ч. рекурсивным вызовом. Кривовато, зато быстро. :)
-    my $SITE_BY_HOST;
 
 #### / OPTIONS
 
@@ -134,21 +130,16 @@ sub main
         my $key_type = $ITEM_ID_NAME->{ $item_type };
         if( defined( $item->{$key_type} ) and $item->{$key_type} ne '' )
         {
-            # гнусный хардкод :(
-            # для шаблонов уникализация должна делаться по связке name + use, для остальных как задумывалось
-            # my $item_uniq_key = $item_type eq 'template' ? $item->{name}.' '.$item->{use} : $item->{$key_type};
-            my $item_uniq_key = $item->{$key_type};
-
-            if( defined $already_exists->{ $item_type }->{ $key_type }->{ $item_uniq_key } )
+            if( defined $already_exists->{ $item_type }->{ $key_type }->{ $item->{$key_type} } )
             {
                 #### DEBUG OUTPUT
                 if($DEBUG) {
-                    printf qq[\t($callfromline) пропущен дубль "%s.%s = %s"\n], $item_type, $key_type, $item_uniq_key;
+                    printf qq[\t($callfromline) пропущен дубль "%s.%s = %s"\n], $item_type, $key_type, $item->{$key_type};
                 }
 
                 return 1;
             }
-            $already_exists->{ $item_type }->{ $key_type }->{ $item_uniq_key } = 1; # запоминаем имя
+            $already_exists->{ $item_type }->{ $key_type }->{ $item->{$key_type} } = 1; # запоминаем имя
         }
         return 0;
     }
@@ -166,7 +157,6 @@ sub main
     my $configs;
     for my $cfg_item ( @{ $list_hosts }, @{ $list_services }, @{ $list_hostgroups }, @{ $list_commands } )
     {
-
         $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key}; # и нафига нужно было писать это с заглавной буквы?
 
         # номер площадки должен определяться ОТДЕЛЬНО для КАЖДОГО элемента конфига (хост, шаблон, сервис и т.п.)
@@ -197,18 +187,8 @@ sub main
         # ШАБЛОН хоста или сервиса
         if( defined( $cfg_item->{register} ) and $cfg_item->{register} == 0)    # шаблон
         {
-            # > ... шаблоны хостов/сервисов. Разделяются на два
-            #
-            # - формируем новый item из таких параметров
-            #
-            #     name    = site<1|2>-<исходный use>
-            #     use     = <исходный use>
-            #     register= <исходный register>
-            #
-            # - в старом item заменяем
-            #     use     = site<1|2>-<исходный use>
-            #
-            if( $cfg_item->{use} =~ m{^(windows\-server)|(linux\-server)|(local\-service)$} )
+            # > ... шаблоны хостов. Разделяются на два
+            if( ($cfg_item->{use} !~ m{^(site[0-9]+\-.+)$}) )
             {
                 my $orig_use = $cfg_item->{use}; # а то оно ниже перезаписывается на измененное
                 for my $site ( @{ $cfg_item->{sites} } )
@@ -216,18 +196,16 @@ sub main
                     my $item_new = {
                         name       => ( sprintf qq[site%d-%s], $site, $orig_use ),
                         register   => $cfg_item->{register},
-                        use        => $orig_use,
-                        # это служебные
+                        use        => $cfg_item->{use},
                         _nagios_setup_key => $cfg_item->{_nagios_setup_key},
                         sites      => $cfg_item->{sites},
                     };
 
-                    $cfg_item->{use} = ( sprintf qq[site%d-%s], $site, $orig_use );
-
-                    # контроль на дубль нового шаблона - вдруг с таким именем уже есть
+                    # контроль дублей шаблонов хостов
                     next if &name_already_exists( 'template', $item_new, $already_exists, __LINE__ ); # дубли режем
 
                     push @{ $configs->{templates} }, $item_new;
+                    $cfg_item->{use} = $item_new->{name};
                 }
             }
 
@@ -235,7 +213,6 @@ sub main
             next if &name_already_exists( 'template', $cfg_item, $already_exists, __LINE__ ); # дубли режем
 
             push @{ $configs->{templates} }, &build_item($cfg_item);
-
         }
         # ЭКЗЕМПЛЯР
         else
@@ -248,7 +225,7 @@ sub main
     }
 
     # дополнительные перетасовки шаблонов
-    # > В описание шаблонов site1-local-service и site1-windows-server производятся  изменения:
+    # > В описание шаблонов siteX-<name> производятся  изменения:
     for my $cfg_item ( @{ $configs->{templates} } )
     {
 
@@ -261,8 +238,7 @@ sub main
         #     $item_new->{sites}->[$i] = $item_new->{sites}->[$i] == 1 ? 2 : 1;
         # }
 
-        # if( $cfg_item->{name} =~ m{^((site[0-9]+\-local\-service)|(site[0-9]+\-windows\-server))$} )
-        if( $cfg_item->{name} =~ m{^site[0-9]+\-} )
+        if( $cfg_item->{name} =~ m{^(site[0-9]+\-.+)$} )
         {
             # добавляем поля
             $item_new->{active_checks_enabled}  = 0;
@@ -346,14 +322,14 @@ sub main
                     binmode $FILE_HANDLERS{$fname};
                     select $FILE_HANDLERS{$fname}; $|=1; select STDOUT;
 
-                    # элементы с полями name и use, содержащими "site1", не должны попадать в конфиги
+                    # элементы с полями name и use, содержащими "site1", не должны попадать в конфиги 
                     # с именами файлов, содержащими "site2", и наоборот
                     if( defined( $cfg_item->{name}) and $cfg_item->{name} =~ m{^site(?<site>[0-9]+)} )
                     {
                         if ($site != $+{site})
                         {
                              #### DEBUG OUTPUT
-                             print qq[Remove:\tsite: $site\tname: $cfg_item->{name}   \t(use: $cfg_item->{use})\n];
+                             print qq[Remove:\tsite: $site\tname: $cfg_item->{name}\tuse: $cfg_item->{use}\n];
                              next;
                         };
                     };
@@ -362,7 +338,7 @@ sub main
                         if ($site != $+{site})
                         {
                              #### DEBUG OUTPUT
-                             print qq[Remove:\tsite: $site\tuse: $cfg_item->{use}   \t(name: $cfg_item->{name})\n];
+                             print qq[Remove:\tsite: $site\tuse: $cfg_item->{use}\tname: $cfg_item->{name}\n];
                              next;
                         };
                     };
@@ -406,7 +382,6 @@ sub get_site
     # host_name или hostgroup_name
     # !!!!! любой элемент может принадлежать не одному хосту или группе, а нескольким!
     # (т.е. значение host_name или hostgroup_name может быть массивом)
-    #   дальнейшее уже неверно
     # Поэтому он может принадлежать и нескольким площадкам!!!!
     # !!!! и его надо записать во все файлы площадок, к которым он принадлежит
     # Т.о. $site = это ссылка на МАССИВ!!!

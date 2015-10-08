@@ -13,6 +13,9 @@ sub mysort { my ($hash) = @_; [ sort keys %$hash ] };
 # $Data::Dumper::Terse = 1; # убрать "$VAR = "
 $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей по ключам
 
+# perl arrange2.pl OLD_VERSION
+my $OLD_VERSION = ( defined($ARGV[0]) and $ARGV[0] eq 'OLD_VERSION' ) ? 1 : 0;
+
 #### OPTIONS
 
     my $DEBUG = ( defined( $ARGV[0] ) and $ARGV[0] eq 'nodebug' ) ? 0 : 1;
@@ -159,6 +162,22 @@ sub main
     $list_hostgroups     = $config->list_hostgroups() || [];
     $list_commands       = $config->list_commands() || [];
 
+################ from prev version ################
+
+        # строим список групп и подгрупп хостов
+        &build_hostgroups( undef, undef );
+
+        #### DEBUG OUTPUT
+        print Dumper( $SITE_BY_HOST );
+
+        # определяемся с номером площадки
+        my $PLOSCHADKA = &get_site_orig( $list_hosts, $SITE_BY_HOST );
+        my $DRUGAYA_PLOSCHADKA = $PLOSCHADKA == 1 ? 2 : 1;
+
+        # die $PLOSCHADKA."\n";
+
+################ / from prev version ################
+
     # строим список соответствия: хост|подгруппа => площадка
     &build_links_item_to_site( undef, undef );
 
@@ -167,12 +186,20 @@ sub main
     for my $cfg_item ( @{ $list_hosts }, @{ $list_services }, @{ $list_hostgroups }, @{ $list_commands } )
     {
 
-        $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key}; # и нафига нужно было писать это с заглавной буквы?
+        if( $OLD_VERSION )
+        {
+            ###### Вертать все взад!!!
+            $cfg_item->{sites} = [ $PLOSCHADKA ]; # определяемся с площадкой раз и навсегда
+        }
+        else
+        {
+            $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key}; # и нафига нужно было писать это с заглавной буквы?
 
-        # номер площадки должен определяться ОТДЕЛЬНО для КАЖДОГО элемента конфига (хост, шаблон, сервис и т.п.)
-        # соответственно имена файлов/каталогов должны быть для каждого ЭЛЕМЕНТА свои
-        # получаем площадки (массив номеров), к которым принадлежит этот элемент
-        $cfg_item->{sites} = &get_site( $cfg_item, $ITEM_TO_SITE );
+            # номер площадки должен определяться ОТДЕЛЬНО для КАЖДОГО элемента конфига (хост, шаблон, сервис и т.п.)
+            # соответственно имена файлов/каталогов должны быть для каждого ЭЛЕМЕНТА свои
+            # получаем площадки (массив номеров), к которым принадлежит этот элемент
+            $cfg_item->{sites} = &get_site( $cfg_item, $ITEM_TO_SITE );
+        }
 
         #### DEBUG OUTPUT
             if($DEBUG) {
@@ -631,4 +658,81 @@ sub write_file
     close FH;
 
     return 1;
+}
+
+
+##############################################################
+sub get_site_orig
+{
+    my $list_hosts = shift || return 0;
+    my $SITE_BY_HOST = shift || return 0;
+
+    for my $cfg_item ( @{ $list_hosts } )
+    {
+        next if defined( $cfg_item->{register} ) and $cfg_item->{register} == 0;    # шаблоны пропускаем
+        if( defined $SITE_BY_HOST->{ $cfg_item->{host_name} } )
+        {
+            # print "$cfg_item->{host_name}\n";
+            return substr( $SITE_BY_HOST->{ $cfg_item->{host_name} }, -1 )
+        }
+    }
+    return 1;   # В случае, если найдутся хосты, которые не определены в $CFG_IN/hostgroups-sites.cfg,
+                # то такие хосты приписываются к site1
+}
+
+# это нужно ТОЛЬКО ДЛЯ ОПРЕДЕЛЕНИЯ ПЛОЩАДКИ по имени хоста.
+# строит список вида "hostname => groupname", при этом в groupname пишет ТОЛЬКО РОДИТЕЛЬСКИЕ ГРУППЫ САМОГО НИЖНЕГО УРОВНЯ,
+# т.е. именно идентификаторы площадок (site1 и site2)
+sub build_hostgroups
+{
+    my $groupname = shift || undef;
+    my $parent_groupname = shift || undef;
+
+    # Идем по всем группам хостов
+    for my $cfg_item ( @{ $list_hostgroups } )
+    {
+        # если передано имя группы - смотрим только в ней
+        next if defined($groupname) and $groupname ne $cfg_item->{hostgroup_name};
+
+        # какого хрена! если в списке только один пункт - список зачем-то превращается в скаляр. фиксим, бо мне тут массив нужен.
+        $cfg_item->{members} = [ $cfg_item->{members} ] if defined( $cfg_item->{members} ) and ref( $cfg_item->{members} ) ne 'ARRAY';
+        $cfg_item->{hostgroup_members} = [ $cfg_item->{hostgroup_members} ] if defined( $cfg_item->{hostgroup_members} ) and ref( $cfg_item->{hostgroup_members} ) ne 'ARRAY';
+
+        # в конфиге явно указаны хосты-члены группы -
+        if( defined( $cfg_item->{members} ) and scalar( @{ $cfg_item->{members} } ) )
+        {
+            for my $member ( @{ $cfg_item->{members} } )
+            {
+                # при этом в кач-ве groupname используем ТОЛЬКО РОДИТЕЛЬСКИЕ ГРУППЫ САМОГО НИЖНЕГО УРОВНЯ,
+                # т.е. именно идентификаторы площадок (site1 и site2)
+                if( defined $parent_groupname )
+                {
+                    $SITE_BY_HOST->{$member} = $parent_groupname;
+                }
+                elsif( not $SITE_BY_HOST->{$member} )
+                {
+                    $SITE_BY_HOST->{$member} = $cfg_item->{hostgroup_name};
+                }
+            }
+        }
+
+        # если передано имя группы - смотрим ТОЛЬКО EE ЧЛЕНОВ
+        next if defined($groupname) and $groupname ne $cfg_item->{hostgroup_name};
+
+        # в конфиге указаны также подгруппы, входящие в группу
+        if( defined( $cfg_item->{hostgroup_members} ) and scalar( @{ $cfg_item->{hostgroup_members} } ) )
+        {
+            # вытаскиваем хосты - членов этих подгрупп
+            for my $subgroup_name ( @{ $cfg_item->{hostgroup_members} } )
+            {
+                # устраняем бесконечную рекурсию в случае ошибки конфига (указание этой же группы в списке своих подгрупп)
+                next if defined($groupname) and $subgroup_name eq $groupname;
+                # !!!!!!!!!!!!!!!! рекурсия !!!!!!!!!!!!
+                &build_hostgroups( $subgroup_name, $cfg_item->{hostgroup_name} );
+            }
+        }
+
+    }
+
+    return( $SITE_BY_HOST );
 }
