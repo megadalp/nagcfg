@@ -1,4 +1,5 @@
 etc/runtime/*
+etc/prepared/*
 _prev.*
 test.*
 .DS_*
