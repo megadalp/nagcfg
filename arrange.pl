@@ -2,7 +2,7 @@
 
 use strict;
 use Clone 'clone';
-#use lib("/usr/local/nagios/lib");
+use lib("/Users/dalp/Projects/nagcfg/lib");
 use Nagios::Config;
 use Data::Dumper;
 
@@ -16,7 +16,7 @@ $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей п�
 
     ###################################################################
     # my $BASE_DIR    = qq[/usr/local/nagios/etc];
-    my $BASE_DIR    = qq[~/Projects/nagcfg/etc];
+    my $BASE_DIR    = qq[/Users/dalp/Projects/nagcfg/etc];
     ###################################################################
 
     my $CFG_IN      = qq[$BASE_DIR/objects];
