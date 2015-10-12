@@ -2,15 +2,12 @@
 
 use strict;
 use Clone 'clone';
-
-use lib("./lib");
+#use lib("/usr/local/nagios/lib");
 use Nagios::Config;
-
 use Data::Dumper;
+
 sub mysort { my ($hash) = @_; [ sort keys %$hash ] };
-# $Data::Dumper::Indent = 0; # не делать отступы/переводы строк
-# $Data::Dumper::Pair = ':'; # знак вместо "=>" в конструкциях "key => val" И ОНА ЖЕ УБИРАЕТ КАВЫЧКИ вокруг цифровых ключей
-# $Data::Dumper::Terse = 1; # убрать "$VAR = "
+
 $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей по ключам
 
 #### OPTIONS
@@ -18,7 +15,8 @@ $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей п�
     my $DEBUG = ( defined( $ARGV[0] ) and $ARGV[0] eq 'nodebug' ) ? 0 : 1;
 
     ###################################################################
-    my $BASE_DIR    = qq[/Users/dalp/Dropbox/Projects/nagcfg/etc];
+    # my $BASE_DIR    = qq[/usr/local/nagios/etc];
+    my $BASE_DIR    = qq[~/Projects/nagcfg/etc];
     ###################################################################
 
     my $CFG_IN      = qq[$BASE_DIR/objects];
@@ -45,7 +43,8 @@ $Data::Dumper::Sortkeys = \&mysort; # для сортировки хэшей п�
     system( "rm -f " . $FILE_HOSTGROUPS_OUT )               if -e $FILE_HOSTGROUPS_OUT;
     system( "cp $FILE_HOSTGROUPS_IN $FILE_HOSTGROUPS_OUT" ) if -e $FILE_HOSTGROUPS_IN;
 
-    # заполняется внутри build_links_item_to_site(), для определения площадки по имени хоста, или группы хостов, или имени шаблона, ну и т.п.
+    # заполняется внутри build_links_item_to_site(), для определения площадки по имени хоста,
+    # или группы хостов, или имени шаблона, ну и т.п.
     my $ITEM_TO_SITE;
 
     # типы элементов и код+шаблоны для формирования имен файлов, куда какой тип элементов сохранять
@@ -79,6 +78,7 @@ my $config;
 
 # получаем список файлов - рекурсивный проход по всем каталогам внутри $CFG_IN, кроме файлов в самом каталоге
 my @flist = split /\n/, `find $CFG_IN/*/ -name '*.cfg'`;
+my $already_exists = {};
 
 #### идем по найденным файлам
     for my $config_file_name ( @flist )
@@ -96,27 +96,16 @@ my @flist = split /\n/, `find $CFG_IN/*/ -name '*.cfg'`;
         &main( $config, $config_file_name ); # ну и собственно разбор/перетасовка конфига
     }
 
-    #### DEBUG OUTPUT
-        if($DEBUG) {
-            print "\n";
-            print "СВЯЗКА ITEM_TO_SITE : ", Dumper( $ITEM_TO_SITE );
-        }
-    #### / DEBUG OUTPUT
-
-#### / ####
-
 sub main
 {
     my $config = shift || return undef;
     my $config_file_name = shift || '$config_file_name - ???';
 
-    # это для отсеивания дублей имен: поля name, host_name, hostgroup_name должны быть уникальными в пределах одной площадки (файла)
-    my $already_exists = {};    # глобальность только в пределах одного файла
+    # отсеивание дублей имен: поля name, host_name, hostgroup_name должны быть уникальными
     sub name_already_exists
     {
         my $item_type = shift || return 0; # $cfg_item->{_nagios_setup_key} || template
         my $item = shift || return 0;
-        my $already_exists =  shift || return 0;
         my $callfromline =  shift || '???';
 
         # уникальные идентификаторы элементов конфига
@@ -134,9 +123,7 @@ sub main
         my $key_type = $ITEM_ID_NAME->{ $item_type };
         if( defined( $item->{$key_type} ) and $item->{$key_type} ne '' )
         {
-            # гнусный хардкод :(
-            # для шаблонов уникализация должна делаться по связке name + use, для остальных как задумывалось
-            # my $item_uniq_key = $item_type eq 'template' ? $item->{name}.' '.$item->{use} : $item->{$key_type};
+            # для шаблонов уникализация должна делаться по связке name + use
             my $item_uniq_key = $item->{$key_type};
 
             if( defined $already_exists->{ $item_type }->{ $key_type }->{ $item_uniq_key } )
@@ -167,33 +154,28 @@ sub main
     for my $cfg_item ( @{ $list_hosts }, @{ $list_services }, @{ $list_hostgroups }, @{ $list_commands } )
     {
 
-        $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key}; # и нафига нужно было писать это с заглавной буквы?
-
-        # номер площадки должен определяться ОТДЕЛЬНО для КАЖДОГО элемента конфига (хост, шаблон, сервис и т.п.)
-        # соответственно имена файлов/каталогов должны быть для каждого ЭЛЕМЕНТА свои
-        # получаем площадки (массив номеров), к которым принадлежит этот элемент
+        $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key};
         $cfg_item->{sites} = &get_site( $cfg_item, $ITEM_TO_SITE );
 
         #### DEBUG OUTPUT
-            if($DEBUG) {
-                my $Data_Dumper_Indent = $Data::Dumper::Indent;
-                my $Data_Dumper_Terse  = $Data::Dumper::Terse ;
-                $Data::Dumper::Indent = 0; # не делать отступы/переводы строк
-                $Data::Dumper::Terse = 1; # убрать "$VAR = "
+        if($DEBUG) {
+            my $Data_Dumper_Indent = $Data::Dumper::Indent;
+            my $Data_Dumper_Terse  = $Data::Dumper::Terse ;
+            $Data::Dumper::Indent = 0; # не делать отступы/переводы строк
+            $Data::Dumper::Terse = 1; # убрать "$VAR = "
 
-                my $item_name = $cfg_item->{host_name} || $cfg_item->{hostgroup_name} || $cfg_item->{command_name} || $cfg_item->{name} || undef;
+            my $item_name = $cfg_item->{host_name} || $cfg_item->{hostgroup_name} || $cfg_item->{command_name} || $cfg_item->{name} || undef;
 
-                printf( qq[%s : Имя %s : Площадки %s\n],
-                    $cfg_item->{_nagios_setup_key},
-                    Dumper( $item_name ),
-                    Dumper( $cfg_item->{sites} ),
-                );
-                $Data::Dumper::Indent = $Data_Dumper_Indent;
-                $Data::Dumper::Terse  = $Data_Dumper_Terse ;
-            }
+            printf( qq[%s : Имя %s : Площадки %s\n],
+                $cfg_item->{_nagios_setup_key},
+                Dumper( $item_name ),
+                Dumper( $cfg_item->{sites} ),
+            );
+            $Data::Dumper::Indent = $Data_Dumper_Indent;
+            $Data::Dumper::Terse  = $Data_Dumper_Terse ;
+        }
         #### DEBUG OUTPUT
 
-        # шаблон или экземпляр?
         # ШАБЛОН хоста или сервиса
         if( defined( $cfg_item->{register} ) and $cfg_item->{register} == 0)    # шаблон
         {
@@ -210,7 +192,7 @@ sub main
             #
             if( $cfg_item->{use} =~ m{^(windows\-server)|(linux\-server)|(local\-service)$} )
             {
-                my $orig_use = $cfg_item->{use}; # а то оно ниже перезаписывается на измененное
+                my $orig_use = $cfg_item->{use};
                 for my $site ( @{ $cfg_item->{sites} } )
                 {
                     my $item_new = {
@@ -225,14 +207,14 @@ sub main
                     $cfg_item->{use} = ( sprintf qq[site%d-%s], $site, $orig_use );
 
                     # контроль на дубль нового шаблона - вдруг с таким именем уже есть
-                    next if &name_already_exists( 'template', $item_new, $already_exists, __LINE__ ); # дубли режем
+                    next if &name_already_exists( 'template', $item_new, __LINE__ ); # дубли режем
 
                     push @{ $configs->{templates} }, $item_new;
                 }
             }
 
             # контроль дублей шаблонов хостов
-            next if &name_already_exists( 'template', $cfg_item, $already_exists, __LINE__ ); # дубли режем
+            next if &name_already_exists( 'template', $cfg_item, __LINE__ ); # дубли режем
 
             push @{ $configs->{templates} }, &build_item($cfg_item);
 
@@ -240,9 +222,6 @@ sub main
         # ЭКЗЕМПЛЯР
         else
         {
-            # контроль дублей экземпляров
-            next if &name_already_exists( $cfg_item->{_nagios_setup_key}, $cfg_item, $already_exists ); # дубли режем
-
             push @{ $configs->{ $cfg_item->{_nagios_setup_key} } }, &build_item($cfg_item);
         }
     }
@@ -254,14 +233,6 @@ sub main
 
         my $item_new = clone( $cfg_item );
 
-        ## НЕ НАДО! или надо? пока нет
-        # # заменяем номер площадки на противоположную
-        # for( my $i=0; $i<scalar(@{ $item_new->{sites} }); $i++ ) # нах оптимальность
-        # {
-        #     $item_new->{sites}->[$i] = $item_new->{sites}->[$i] == 1 ? 2 : 1;
-        # }
-
-        # if( $cfg_item->{name} =~ m{^((site[0-9]+\-local\-service)|(site[0-9]+\-windows\-server))$} )
         if( $cfg_item->{name} =~ m{^site[0-9]+\-} )
         {
             # добавляем поля
@@ -289,106 +260,103 @@ sub main
         }
     }
 
-
     #### вывод в файлы
 
-        # группы хостов всегда пишутся в один файл (пока?)
-        &write_file( $FILE_HOSTGROUPS_OUT, &build_config( $configs->{hostgroup} ) ) or die "Can't write $FILE_HOSTGROUPS_OUT!";
+    # группы хостов всегда пишутся в один файл (пока?)
+    &write_file( $FILE_HOSTGROUPS_OUT, &build_config( $configs->{hostgroup} ) ) or die "Can't write $FILE_HOSTGROUPS_OUT!";
 
-        # идем по списку типов
-        for my $cfg_item_type ( keys %{ $CFG_ITEM_TYPES } )
+    # идем по списку типов
+    for my $cfg_item_type ( keys %{ $CFG_ITEM_TYPES } )
+    {
+        # идем по списку элементов типа
+        for my $cfg_item ( @{ $configs->{$cfg_item_type} } )
         {
-            # идем по списку элементов типа
-            for my $cfg_item ( @{ $configs->{$cfg_item_type} } )
+            #### DEBUG OUTPUT
+            if($DEBUG) {
+                my $Data_Dumper_Indent = $Data::Dumper::Indent;
+                my $Data_Dumper_Terse  = $Data::Dumper::Terse ;
+                $Data::Dumper::Indent = 0; # не делать отступы/переводы строк
+                $Data::Dumper::Terse = 1; # убрать "$VAR = "
+
+                my $item_name = $cfg_item->{host_name} || $cfg_item->{hostgroup_name} || $cfg_item->{name} || undef;
+
+                $config_file_name =~ s{^.*?/([^/]+)$}{$1};
+
+                printf( qq[%s : %s : %s : %s : %s\n],
+                    $config_file_name,
+                    $cfg_item_type,
+                    $cfg_item->{_nagios_setup_key},
+                    Dumper( $item_name ),
+                    Dumper( $cfg_item->{sites} ),
+                );
+
+                $Data::Dumper::Indent = $Data_Dumper_Indent;
+                $Data::Dumper::Terse  = $Data_Dumper_Terse ;
+            }
+            #### DEBUG OUTPUT
+
+            # идем по списку площадок, к которым относится элемент
+            for my $site ( @{ $cfg_item->{sites} } )
             {
-                #### DEBUG OUTPUT
-                    # if($DEBUG) {
-                    #     my $Data_Dumper_Indent = $Data::Dumper::Indent;
-                    #     my $Data_Dumper_Terse  = $Data::Dumper::Terse ;
-                    #     $Data::Dumper::Indent = 0; # не делать отступы/переводы строк
-                    #     $Data::Dumper::Terse = 1; # убрать "$VAR = "
 
-                    #     my $item_name = $cfg_item->{host_name} || $cfg_item->{hostgroup_name} || $cfg_item->{name} || undef;
+                # для каждой площадки формируем свое имя файла
+                my $another_site = $site == 1 ? 2 : 1;
+                my $fname; eval $CFG_ITEM_TYPES->{ $cfg_item_type }; die qq[File name for '$cfg_item_type' not formed: ] . $@ if $@;
 
-                    #     $config_file_name =~ s{^.*?/([^/]+)$}{$1};
-
-                    #     printf( qq[%s : %s : %s : %s : %s\n],
-                    #         $config_file_name,
-                    #         $cfg_item_type,
-                    #         $cfg_item->{_nagios_setup_key},
-                    #         Dumper( $item_name ),
-                    #         Dumper( $cfg_item->{sites} ),
-                    #     );
-
-                    #     $Data::Dumper::Indent = $Data_Dumper_Indent;
-                    #     $Data::Dumper::Terse  = $Data_Dumper_Terse ;
-                    # }
-                #### DEBUG OUTPUT
-
-                # идем по списку площадок, к которым относится элемент
-                for my $site ( @{ $cfg_item->{sites} } )
+                # если файл еще не открыт - если существует, удаляем его, и вновь открываем (создаем), на запись и добавление
+                if( not defined $FILE_HANDLERS{$fname} )
                 {
-
-                    # для каждой площадки формируем свое имя файла
-                    my $another_site = $site == 1 ? 2 : 1;
-                    my $fname; eval $CFG_ITEM_TYPES->{ $cfg_item_type }; die qq[File name for '$cfg_item_type' not formed: ] . $@ if $@;
-
-                    # если файл еще не открыт - если существует, удаляем его, и вновь открываем (создаем), на запись и добавление
-                    if( not defined $FILE_HANDLERS{$fname} )
-                    {
-                        system(qq[rm -f $fname]) if -e $fname;
-                        open( $FILE_HANDLERS{$fname}, "+>", $fname ) or die "cannot open $fname: $!";
-
-                        #### DEBUG OUTPUT
-                        # print qq[\t$fname\n];
-
-                    }
-                    binmode $FILE_HANDLERS{$fname};
-                    select $FILE_HANDLERS{$fname}; $|=1; select STDOUT;
-
-                    # элементы с полями name и use, содержащими "site1", не должны попадать в конфиги
-                    # с именами файлов, содержащими "site2", и наоборот
-                    if( defined( $cfg_item->{name}) and $cfg_item->{name} =~ m{^site(?<site>[0-9]+)} )
-                    {
-                        if ($site != $+{site})
-                        {
-                             #### DEBUG OUTPUT
-                             print qq[Remove:\tsite: $site\tname: $cfg_item->{name}   \t(use: $cfg_item->{use})\n];
-                             next;
-                        };
-                    };
-                    if( defined( $cfg_item->{use}) and $cfg_item->{use} =~ m{^site(?<site>[0-9]+)} )
-                    {
-                        if ($site != $+{site})
-                        {
-                             #### DEBUG OUTPUT
-                             print qq[Remove:\tsite: $site\tuse: $cfg_item->{use}   \t(name: $cfg_item->{name})\n];
-                             next;
-                        };
-                    };
-
-                    # формируем текст элемента и дописываем его в конец файла
-                    my $out = sprintf qq[define %s{\n], $cfg_item->{_nagios_setup_key};
-                    for my $param ( sort keys %{ $cfg_item } )
-                    {
-                        # эти поля там не нужны
-                        next if $param =~ m{^(?:_nagios_setup_key|sites)$}o;
-
-                        my $value = $cfg_item->{$param};
-                        next if not defined $value;
-
-                        $out .= ( sprintf qq[\t$param %s\n], $value );
-                    }
-                    $out .= qq[}\n\n];
-
-                    print {$FILE_HANDLERS{$fname}} $out;
-
+                    system(qq[rm -f $fname]) if -e $fname;
+                    open( $FILE_HANDLERS{$fname}, "+>", $fname ) or die "cannot open $fname: $!";
                 }
+                binmode $FILE_HANDLERS{$fname};
+                select $FILE_HANDLERS{$fname}; $|=1; select STDOUT;
+
+                # элементы с полями name и use, содержащими "site1", не должны попадать в конфиги
+                # с именами файлов, содержащими "site2", и наоборот
+                if( defined( $cfg_item->{name}) and $cfg_item->{name} =~ m{^site(?<site>[0-9]+)} )
+                {
+                    if ($site != $+{site})
+                    {
+                         #### DEBUG OUTPUT
+                         if($DEBUG) {
+                             print qq[Remove:\tsite: $site\tname: $cfg_item->{name}   \t(use: $cfg_item->{use})\n];
+                         }
+                         next;
+                    };
+                };
+                if( defined( $cfg_item->{use}) and $cfg_item->{use} =~ m{^site(?<site>[0-9]+)} )
+                {
+                    if ($site != $+{site})
+                    {
+                         #### DEBUG OUTPUT
+                         if($DEBUG) {
+                             print qq[Remove:\tsite: $site\tuse: $cfg_item->{use}   \t(name: $cfg_item->{name})\n];
+                         }
+                         next;
+                    };
+                };
+
+                # формируем текст элемента и дописываем его в конец файла
+                my $out = sprintf qq[define %s{\n], $cfg_item->{_nagios_setup_key};
+                for my $param ( sort keys %{ $cfg_item } )
+                {
+                    # эти поля там не нужны
+                    next if $param =~ m{^(?:_nagios_setup_key|sites)$}o;
+
+                    my $value = $cfg_item->{$param};
+                    next if not defined $value;
+
+                    $out .= ( sprintf qq[\t$param %s\n], $value );
+                }
+                $out .= qq[}\n\n];
+
+                print {$FILE_HANDLERS{$fname}} $out;
+
             }
         }
+    }
     #### / вывод в файлы
-
-
     return 1;
 }
 
@@ -401,15 +369,6 @@ sub get_site
 
     my %tmpsites;    # для уникализации
     my $sites = [];
-
-    # принадлежность элемента к хосту или группе хостов определяется по полям
-    # host_name или hostgroup_name
-    # !!!!! любой элемент может принадлежать не одному хосту или группе, а нескольким!
-    # (т.е. значение host_name или hostgroup_name может быть массивом)
-    #   дальнейшее уже неверно
-    # Поэтому он может принадлежать и нескольким площадкам!!!!
-    # !!!! и его надо записать во все файлы площадок, к которым он принадлежит
-    # Т.о. $site = это ссылка на МАССИВ!!!
 
     my $item_name = $cfg_item->{host_name} || $cfg_item->{hostgroup_name} || $cfg_item->{command_name} || $cfg_item->{name} || undef;
 
@@ -453,7 +412,7 @@ sub get_template_sites {
     # идем по экземплярам (хостов или сервисов)
     for my $cfg_item ( @{ $list_hosts }, @{ $list_services } )
     {
-        $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key}; # и нафига нужно было писать это с заглавной буквы?
+        $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key};
 
         # нашли экземпляр хоста или сервиса, в котором есть упоминание переданного шаблона
         if(
@@ -482,8 +441,6 @@ sub get_template_sites {
     return( scalar @template_sites ? [ @template_sites ] : [ -1 ] );
 }
 
-
-
 # строит список вида "<host|subgroup>name => site[12]" (идентификаторы площадок (site1 и site2))
 # используется ДЛЯ ОПРЕДЕЛЕНИЯ ПЛОЩАДКИ (в итоге имени файла) для каждого элемента конфига.
 sub build_links_item_to_site
@@ -494,9 +451,9 @@ sub build_links_item_to_site
         $cfg_item->{_nagios_setup_key} = lc $cfg_item->{_nagios_setup_key}; # и нафига нужно было писать это с заглавной буквы?
 
         #### DEBUG OUTPUT
-        # if($DEBUG) {
-        #     printf qq['%s'\n], $cfg_item->{hostgroup_name};
-        # }
+        if($DEBUG) {
+             printf qq['%s'\n], $cfg_item->{hostgroup_name};
+        }
 
         # заполняем только для групп с именами типа site[12] (т.е. только для "площадок")
         my $THIS_IS_MAIN_SITE = $cfg_item->{hostgroup_name} =~ m{^site([0-9]+)$} ? 1 : 0;
@@ -509,9 +466,9 @@ sub build_links_item_to_site
         next if not defined $members;
 
         #### DEBUG OUTPUT
-        # if($DEBUG) {
-        #     print "\tmembers :\n";
-        # }
+        if($DEBUG) {
+             print "\tmembers :\n";
+        }
 
         # если в списке только один пункт - список зачем-то превращается в скаляр. фиксим, бо мне тут массив нужен.
         $members = [ $members ] if ref( $members ) ne 'ARRAY';
@@ -519,9 +476,9 @@ sub build_links_item_to_site
         {
 
             #### DEBUG OUTPUT
-            # if($DEBUG) {
-            #     printf "\t\t%s\n", $host_name;
-            # }
+            if($DEBUG) {
+                 printf "\t\t%s\n", $host_name;
+            }
 
             $ITEM_TO_SITE->{ $host_name } = $SITE_NUMBER if $THIS_IS_MAIN_SITE;
         }
@@ -530,16 +487,16 @@ sub build_links_item_to_site
         next if not defined $include_groups;
 
         #### DEBUG OUTPUT
-        # if($DEBUG) {
-        #     print "\tinclude groups:\n";
-        # }
+        if($DEBUG) {
+             print "\tinclude groups:\n";
+        }
 
         for my $group_name ( @$include_groups )
         {
             #### DEBUG OUTPUT
-            # if($DEBUG) {
-            #     printf "\t\t%s\n", $group_name;
-            # }
+            if($DEBUG) {
+                 printf "\t\t%s\n", $group_name;
+            }
 
             $ITEM_TO_SITE->{ $group_name } = $SITE_NUMBER if $THIS_IS_MAIN_SITE;
 
@@ -553,9 +510,9 @@ sub build_links_item_to_site
                 for my $host ( @{ $members } )
                 {
                     #### DEBUG OUTPUT
-                    # if($DEBUG) {
-                    #     printf "\t\t\t%s\n", $host;
-                    # }
+                    if($DEBUG) {
+                         printf "\t\t\t%s\n", $host;
+                    }
 
                     $ITEM_TO_SITE->{ $host } = $SITE_NUMBER if $THIS_IS_MAIN_SITE;
                 }
